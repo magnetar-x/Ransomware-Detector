@@ -101,9 +101,12 @@ class TestScenarioContent:
         assert len(writes) > 0, "Expected WRITE events from compiler scenario"
         for w in writes:
             if len(w["payload_sample"]) > 0:
-                # Low-entropy payloads → all bytes in printable ASCII range
-                assert all(0x20 <= b <= 0x7E for b in w["payload_sample"]), \
-                    "Compiler payload should be low-entropy ASCII"
+                # Low-entropy payloads: repetitive pattern, limited byte diversity
+                unique_bytes = len(set(w["payload_sample"]))
+                assert unique_bytes <= 20, (
+                    f"Compiler payload should have low byte diversity, "
+                    f"got {unique_bytes} unique bytes"
+                )
 
     def test_ransomware_inplace_high_entropy_payload(self) -> None:
         events = _collect_events("ransomware_inplace", count=100)

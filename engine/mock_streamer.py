@@ -75,8 +75,13 @@ def _make_event(
 # ---------------------------------------------------------------------------
 
 def _low_entropy_payload(size: int = PAYLOAD_SAMPLE_SIZE) -> bytes:
-    """Return realistic low-entropy bytes (ASCII text-like)."""
-    return bytes(random.choices(range(0x20, 0x7F), k=size))
+    """Return realistic low-entropy bytes (repetitive structured content).
+
+    Uses a short repeating pattern with limited byte diversity so that
+    Shannon entropy stays well below the 5.4 bits/byte inline threshold.
+    """
+    pattern = b"int x = 0;\n"
+    return (pattern * (size // len(pattern) + 1))[:size]
 
 
 def _high_entropy_payload(size: int = PAYLOAD_SAMPLE_SIZE) -> bytes:
