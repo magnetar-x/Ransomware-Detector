@@ -1,0 +1,18 @@
+{
+  "type": "object",
+  "properties": {
+    "timestamp": { "type": "number" },
+    "pid": { "type": "integer" },
+    "process_name": { "type": "string" },
+    "threat_score": { "type": "number" },
+    "action_taken": { 
+      "type": "string", 
+      "enum": ["NONE", "SIGSTOP", "SIGKILL", "DRY_RUN_KILL"] 
+    },
+    "trigger_reasons": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  },
+  "required": ["timestamp", "pid", "process_name", "threat_score", "action_taken"]
+}
