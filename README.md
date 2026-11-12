@@ -183,9 +183,9 @@ Ransomware-Detector/
 
 | Module | Branch | Status | Tests |
 |---|---|---|---|
-| **Kernel eBPF Probes** (`kernel/`) | `feat/kernel-probes` | 🔨 In Progress | — |
-| **Detection Engine** (`engine/`) | `feat/core-engine` | ✅ Complete | 100/100 passing |
-| **Testing & Dashboard** (`ui_testing/`) | `feat/testing-ui` | 🔨 In Progress | — |
+| **Kernel eBPF Probes** (`kernel/`) | `feat/kernel-probes` | In Progress | — |
+| **Detection Engine** (`engine/`) | `feat/core-engine` | Complete | 100/100 passing |
+| **Testing & Dashboard** (`ui_testing/`) | `feat/testing-ui` | In Progress | — |
 
 ### Engine Test Results
 
@@ -194,11 +194,11 @@ Ransomware-Detector/
 ```
 
 Key validations:
-- ✅ **Zero false positives** on benign compiler and archive workloads at 15,000 events/sec
-- ✅ **Sub-50ms detection latency** from first malicious event to process termination
-- ✅ **Canary instant-kill** — honeyfile tampering triggers threat score ≥ 100 immediately
-- ✅ **Selective mitigation** — mixed workloads terminate only the ransomware PID
-- ✅ **Full IPC schema compliance** — every telemetry packet validates against `common/ipc_schema.json`
+- **Zero false positives** on benign compiler and archive workloads at 15,000 events/sec
+- **Sub-50ms detection latency** from first malicious event to process termination
+- **Canary instant-kill** — honeyfile tampering triggers threat score ≥ 100 immediately
+- **Selective mitigation** — mixed workloads terminate only the ransomware PID
+- **Full IPC schema compliance** — every telemetry packet validates against `common/ipc_schema.json`
 
 ---
 
