@@ -142,7 +142,10 @@ class AegisEngineDaemon:
                     "avg_processing_latency_us": round(latency_us, 2),
                 }
                 self.ipc_publisher.publish_alert(
-                    state, action_taken=action, system_metrics=sys_metrics
+                    state,
+                    action_taken=("SIGKILL_AND_FREEZE_TREE" if action == "SIGKILL" else action),
+                    threshold=self.threshold,
+                    system_metrics=sys_metrics
                 )
 
         t_end = time.perf_counter_ns()

@@ -24,6 +24,10 @@ from engine.config import (
     EXT_MUTATION_MIN_COUNT,
     EXT_MUTATION_WINDOW_SEC,
     EVENT_RENAME,
+    EVENT_CLOSE,
+    EVENT_OPEN,
+    EVENT_WRITE,
+    KNOWN_RENAME_EXTENSIONS,
     SCORE_DECAY_LAMBDA,
     SCORE_EXTENSION_UNIFORM,
     SLIDING_WINDOW_SEC,
@@ -56,6 +60,8 @@ class PIDState:
         "magic_bytes",
         # ── velocity window ──
         "events_window",
+        "write_events_window",
+        "rename_events_window",
         # ── extension uniformity ──
         "rename_extensions",
         # ── sequence-DAG state ──
@@ -85,6 +91,8 @@ class PIDState:
 
         # Timestamps of recent events for velocity measurement
         self.events_window: deque[float] = deque()
+        self.write_events_window: deque[float] = deque()
+        self.rename_events_window: deque[float] = deque()
 
         # (timestamp, new_extension, original_filename)  for rename-uniformity
         self.rename_extensions: deque[tuple[float, str, str]] = deque()
@@ -189,12 +197,29 @@ class StateTracker:
         target-files list."""
         now = time.monotonic()
         state.events_window.append(now)
+        event_type = event.get("event_type")
+        if event_type == EVENT_OPEN:
+            fd = event.get("fd", -1)
+            filename = event.get("filename", "")
+            if fd is not None and fd >= 0 and filename:
+                state.fd_map[int(fd)] = filename
+        elif event_type == EVENT_CLOSE:
+            fd = event.get("fd", -1)
+            if fd is not None and fd >= 0:
+                state.fd_map.pop(int(fd), None)
+        elif event_type == EVENT_WRITE:
+            state.write_events_window.append(now)
+        elif event_type == EVENT_RENAME:
+            state.rename_events_window.append(now)
         state.last_event_time = now
 
         # Prune entries outside the 1-second window
         cutoff = now - SLIDING_WINDOW_SEC
         while state.events_window and state.events_window[0] < cutoff:
             state.events_window.popleft()
+        for window in (state.write_events_window, state.rename_events_window):
+            while window and window[0] < cutoff:
+                window.popleft()
 
         # Track affected filenames for ALERT packets
         fname = event.get("filename", "")
@@ -210,6 +235,18 @@ class StateTracker:
         while state.events_window and state.events_window[0] < cutoff:
             state.events_window.popleft()
         return len(state.events_window) / SLIDING_WINDOW_SEC
+
+    def get_io_velocity(self, state: PIDState) -> dict[str, float]:
+        """Return separate write and rename rates over the one-second window."""
+        now = time.monotonic()
+        cutoff = now - SLIDING_WINDOW_SEC
+        for window in (state.write_events_window, state.rename_events_window):
+            while window and window[0] < cutoff:
+                window.popleft()
+        return {
+            "writes_per_sec": len(state.write_events_window) / SLIDING_WINDOW_SEC,
+            "renames_per_sec": len(state.rename_events_window) / SLIDING_WINDOW_SEC,
+        }
 
     # -- extension-uniformity burst detection --------------------------------
 
@@ -254,7 +291,7 @@ class StateTracker:
             ext_files.setdefault(ext, set()).add(orig_fname)
 
         for ext, files in ext_files.items():
-            if len(files) >= EXT_MUTATION_MIN_COUNT:
+            if ext.lower() not in KNOWN_RENAME_EXTENSIONS and len(files) >= EXT_MUTATION_MIN_COUNT:
                 # Fire once per burst — clear the history
                 state.rename_extensions.clear()
                 return SCORE_EXTENSION_UNIFORM

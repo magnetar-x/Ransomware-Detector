@@ -1,18 +1,22 @@
 {
   "type": "object",
   "properties": {
-    "timestamp": { "type": "number" },
+    "packet_type": { "type": "string", "enum": ["METRIC", "ALERT"] },
+    "timestamp_ms": { "type": "integer" },
     "pid": { "type": "integer" },
-    "process_name": { "type": "string" },
-    "threat_score": { "type": "number" },
-    "action_taken": { 
-      "type": "string", 
-      "enum": ["NONE", "SIGSTOP", "SIGKILL", "DRY_RUN_KILL"] 
+    "comm": { "type": "string" },
+    "uid": { "type": "integer" },
+    "risk_score": { "type": "number" },
+    "threshold": { "type": "number" },
+    "action_taken": {
+      "type": "string",
+      "enum": ["NONE", "SIGSTOP", "SIGKILL", "DRY_RUN_KILL", "SIGKILL_AND_FREEZE_TREE"]
     },
-    "trigger_reasons": {
+    "triggered_heuristics": {
       "type": "array",
       "items": { "type": "string" }
-    }
+    },
+    "system_metrics": { "type": "object" }
   },
-  "required": ["timestamp", "pid", "process_name", "threat_score", "action_taken"]
+  "required": ["packet_type", "timestamp_ms", "pid", "comm", "uid", "risk_score", "threshold", "action_taken", "triggered_heuristics", "system_metrics"]
 }

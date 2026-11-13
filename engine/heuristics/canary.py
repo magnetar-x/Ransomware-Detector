@@ -85,6 +85,8 @@ class CanaryManager:
     def __init__(self, deploy_dir: str = DEFAULT_CANARY_DIR) -> None:
         self._deploy_dir: str = deploy_dir
         self._canary_paths: set[str] = set()
+        self._canary_inodes: set[tuple[int, int]] = set()
+        self._path_inodes: dict[str, tuple[int, int]] = {}
         self._deployed: bool = False
 
     # -- public API ---------------------------------------------------------
@@ -97,15 +99,31 @@ class CanaryManager:
             try:
                 with open(path, "wb") as fh:
                     fh.write(content)
-                self._canary_paths.add(os.path.abspath(path))
+                absolute_path = os.path.abspath(path)
+                stat = os.stat(absolute_path)
+                inode = (stat.st_dev, stat.st_ino)
+                self._canary_paths.add(absolute_path)
+                self._canary_inodes.add(inode)
+                self._path_inodes[absolute_path] = inode
                 logger.info("Canary deployed: %s", path)
             except OSError as exc:
                 logger.warning("Failed to deploy canary %s: %s", path, exc)
         self._deployed = True
 
     def is_canary(self, filepath: str) -> bool:
-        """O(1) check whether *filepath* is a deployed honeyfile."""
-        return os.path.abspath(filepath) in self._canary_paths
+        """O(1) check whether *filepath* is a registered canary path/inode."""
+        absolute_path = os.path.abspath(filepath)
+        if absolute_path not in self._canary_paths:
+            return False
+        expected = self._path_inodes.get(absolute_path)
+        if expected is None:
+            return False
+        try:
+            stat = os.stat(absolute_path)
+        except OSError:
+            # Rename/unlink events refer to the pre-operation path.
+            return True
+        return (stat.st_dev, stat.st_ino) == expected
 
     @property
     def canary_paths(self) -> frozenset[str]:
@@ -157,4 +175,6 @@ class CanaryManager:
                     self._deploy_dir, exc,
                 )
         self._canary_paths.clear()
+        self._canary_inodes.clear()
+        self._path_inodes.clear()
         self._deployed = False

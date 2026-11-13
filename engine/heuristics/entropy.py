@@ -40,12 +40,13 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Precomputed log₂ lookup table
 # ---------------------------------------------------------------------------
-# _P_LOG2P[c] = -(c/N) * log₂(c/N)  for every possible count c in
-# [0 .. max_sample_size].  We precompute for N=256 (byte value range)
-# and for up to 65536 total bytes; the function recomputes on-the-fly
-# for arbitrary N using plain math when the sample is larger.
-# For the 64-byte and 4096-byte use-cases we use direct computation
-# since it's already O(256) — fast enough.
+# Entropy is evaluated using a lookup table for log2(count).  This avoids
+# calling math.log2 once per histogram bucket while retaining support for both
+# the 64-byte inline sample and the 4096-byte disk sample.
+_MAX_LOOKUP_COUNT = 4096
+_LOG2_COUNTS = [0.0] * (_MAX_LOOKUP_COUNT + 1)
+for _count in range(1, _MAX_LOOKUP_COUNT + 1):
+    _LOG2_COUNTS[_count] = math.log2(_count)
 
 def shannon_entropy(data: bytes) -> float:
     r"""
@@ -66,12 +67,12 @@ def shannon_entropy(data: bytes) -> float:
         counts[b] += 1
 
     # Compute entropy  (O(256) — constant)
-    entropy = 0.0
-    inv_n = 1.0 / length
+    log_n = math.log2(length)
+    entropy = log_n
     for c in counts:
         if c > 0:
-            p = c * inv_n
-            entropy -= p * math.log2(p)
+            log_c = _LOG2_COUNTS[c] if c <= _MAX_LOOKUP_COUNT else math.log2(c)
+            entropy -= (c / length) * log_c
     return entropy
 
 
@@ -145,7 +146,8 @@ def check_inline_entropy(event: dict, state: "PIDState") -> float:
         h = shannon_entropy(payload)
         state.last_write_entropy = h
 
-        if h > ENTROPY_INLINE_HIGH and filename in state.magic_bytes:
+        write_offset = int(event.get("offset", 0))
+        if write_offset == 0 and h > ENTROPY_INLINE_HIGH and filename in state.magic_bytes:
             cached_magic = state.magic_bytes[filename]
             if _match_magic(cached_magic):
                 label = _match_magic(cached_magic)

@@ -185,10 +185,23 @@ class EventIngestor:
         logger.info("Starting live BPFEventStreamer")
         self._streamer = BPFEventStreamer()
 
-        def _on_live_event(ctx, data, size):  # noqa: ARG001 – BCC callback signature
-            """Receive raw ring-buffer bytes and convert to canonical dict."""
-            evt = ctypes.cast(data, ctypes.POINTER(FsEvent)).contents
-            self._callback(_cstruct_to_dict(evt))
+        def _on_live_event(event):
+            """Receive the canonical dictionary emitted by Role 1."""
+            if isinstance(event, dict):
+                self._callback(event)
+                return
+            # Compatibility with the older raw BCC callback shape.
+            if isinstance(event, tuple) and len(event) >= 2:
+                _ctx, data = event[0], event[1]
+                evt = ctypes.cast(data, ctypes.POINTER(FsEvent)).contents
+                self._callback(_cstruct_to_dict(evt))
+                return
+            raise TypeError(f"Unsupported live event shape: {type(event).__name__}")
 
         self._streamer.register_callback(_on_live_event)
-        self._streamer.start()  # blocks
+        runner = getattr(self._streamer, "start_blocking_loop", None)
+        if runner is None:
+            runner = getattr(self._streamer, "start", None)
+        if runner is None:
+            raise RuntimeError("BPFEventStreamer has no blocking start method")
+        runner()  # blocks

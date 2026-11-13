@@ -17,7 +17,7 @@ import threading
 import time
 from typing import TYPE_CHECKING, Any
 
-from engine.config import TELEMETRY_FILE, UDP_HOST, UDP_PORT
+from engine.config import KILL_THRESHOLD, TELEMETRY_FILE, UDP_HOST, UDP_PORT
 
 if TYPE_CHECKING:
     from engine.state_tracker import PIDState
@@ -65,19 +65,31 @@ class IPCPublisher:
         self,
         state: "PIDState",
         action_taken: str,
+        threshold: float = KILL_THRESHOLD,
         system_metrics: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """
         Build and broadcast an ALERT packet conforming strictly to common/ipc_schema.json.
         """
+        timestamp_ms = int(time.time() * 1000)
         payload: dict[str, Any] = {
-            "timestamp": time.time(),
+            "packet_type": "ALERT",
+            "timestamp_ms": timestamp_ms,
+            "pid": state.pid,
+            "comm": state.comm or f"pid_{state.pid}",
+            "uid": state.uid,
+            "risk_score": round(state.risk_score, 2),
+            "threshold": threshold,
+            "action_taken": action_taken,
+            "triggered_heuristics": list(state.triggered_heuristics) if state.triggered_heuristics else ["HIGH_RISK_THRESHOLD_EXCEEDED"],
+            "target_files_sample": list(state.target_files[-10:]),
+            "system_metrics": system_metrics or {},
+            # Legacy aliases retained for existing dashboard consumers.
+            "timestamp": timestamp_ms / 1000.0,
             "pid": state.pid,
             "process_name": state.comm or f"pid_{state.pid}",
             "threat_score": round(state.risk_score, 2),
-            "action_taken": action_taken,
             "trigger_reasons": list(state.triggered_heuristics) if state.triggered_heuristics else ["HIGH_RISK_THRESHOLD_EXCEEDED"],
-            "target_files_sample": list(state.target_files[-10:]),
         }
         if system_metrics is not None:
             payload["system_metrics"] = system_metrics
@@ -93,12 +105,21 @@ class IPCPublisher:
         """
         Build and broadcast a periodic METRIC packet conforming to common/ipc_schema.json.
         """
+        timestamp_ms = int(time.time() * 1000)
         payload: dict[str, Any] = {
-            "timestamp": time.time(),
+            "packet_type": "METRIC",
+            "timestamp_ms": timestamp_ms,
+            "pid": 0,
+            "comm": "",
+            "uid": 0,
+            "risk_score": 0.0,
+            "threshold": KILL_THRESHOLD,
+            "action_taken": "NONE",
+            "triggered_heuristics": [],
+            "timestamp": timestamp_ms / 1000.0,
             "pid": 0,
             "process_name": "aegis_engine",
             "threat_score": 0.0,
-            "action_taken": "NONE",
             "trigger_reasons": [],
             "system_metrics": {
                 **system_metrics,

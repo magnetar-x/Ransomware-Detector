@@ -54,7 +54,16 @@ DAG_EXPONENT_BASE: float = 1.5
 # ---------------------------------------------------------------------------
 SCORE_EXTENSION_UNIFORM: float = 50.0
 EXT_MUTATION_WINDOW_SEC: float = 3.0
-EXT_MUTATION_MIN_COUNT: int = 5
+# The specification says “more than 5 distinct files”.
+EXT_MUTATION_MIN_COUNT: int = 6
+
+# Suffixes commonly produced by normal document and build workflows.  Rename
+# bursts using these suffixes are not treated as unknown ransomware suffixes.
+KNOWN_RENAME_EXTENSIONS: frozenset[str] = frozenset({
+    ".bak", ".tmp", ".swp", ".part", ".o", ".d", ".s", ".ll", ".bc",
+    ".txt", ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
+    ".jpg", ".jpeg", ".png", ".gif", ".zip", ".gz", ".tar", ".tar.gz",
+})
 
 # ---------------------------------------------------------------------------
 # Time windows & score decay
