@@ -20,8 +20,8 @@ Ransomware Detector intercepts filesystem syscalls at the kernel level — befor
 │                            Linux Kernel Space                              │
 │                                                                            │
 │   sys_openat ──┐                                                           │
-│   sys_write  ──┤── eBPF Tracepoint Probes ──► BPF Ring Buffer ──┐         │
-│   sys_rename ──┤     (probes.bpf.c)              (fs_event_t)    │         │
+│   sys_write  ──┤── eBPF Tracepoint Probes ──► BPF Perf Buffer ──┐         │
+│   sys_rename ──┤     (probes.bpf.c)            (file_event_t)    │         │
 │   sys_unlink ──┘                                                 │         │
 └──────────────────────────────────────────────────────────────────┼─────────┘
                                                                    │
@@ -58,11 +58,11 @@ Ransomware Detector intercepts filesystem syscalls at the kernel level — befor
 
 The system is divided into three independent, contract-bound modules built in parallel:
 
-### Module 1 — Kernel eBPF Probes (`kernel/`)
+### Module 1 — Kernel eBPF Probes (`kernel_probes/`)
 
-Low-overhead eBPF tracepoint programs attached to `sys_openat`, `sys_write`, `sys_renameat2`, `sys_unlinkat`, and `sys_close`. Events are pushed through a BPF ring buffer as C structs and converted to Python dicts by a BCC-based loader class (`BPFEventStreamer`). In-kernel PID filtering and pseudo-filesystem exclusions ensure only relevant filesystem activity reaches user space.
+Low-overhead eBPF tracepoint programs attached to `sys_openat`, `sys_write`, `sys_renameat`, `sys_renameat2`, `sys_unlinkat`, and `sys_close`. Events are pushed through a BCC perf buffer as C structs and converted to Python dicts by a BCC-based loader class (`BPFEventStreamer`). In-kernel PID filtering and pseudo-filesystem exclusions ensure only relevant filesystem activity reaches user space.
 
-**Tech:** C (eBPF restricted C), BCC, Linux tracepoints, BPF ring buffer
+**Tech:** C (eBPF restricted C), BCC, Linux tracepoints, BPF perf buffer
 
 ### Module 2 — Detection Engine (`engine/`)
 
@@ -79,9 +79,9 @@ When a process's cumulative threat score crosses the configurable threshold (def
 
 **Tech:** Python 3.10+, ctypes, Shannon entropy, exponential decay scoring
 
-### Module 3 — Testing, Benchmarks & Dashboard (`ui_testing/`)
+### Module 3 — Testing, Benchmarks & Dashboard (`ui_testing/`, planned)
 
-Safe attack simulators (AES encryption loops, mass-rename storms, copy-and-shred), false-positive workload generators (compiler builds, archive compression, SQLite writes), overhead profilers, and a real-time web dashboard (FastAPI + WebSocket + Chart.js) consuming telemetry over UDP port 51423.
+This module is not implemented yet. The `ui_testing/` directory currently contains only a placeholder; the simulators, benchmarks, dashboard, and TUI remain planned.
 
 **Tech:** Python, FastAPI, Tailwind CSS, Chart.js, Rich/Textual TUI
 
@@ -94,14 +94,14 @@ Two shared contracts decouple the modules, enabling fully independent developmen
 ### Contract A — Kernel → Engine (`common/event_defs.h`)
 
 ```c
-struct fs_event_t {
-    unsigned long long ts;          // Kernel monotonic timestamp (ns)
-    unsigned int       pid;         // Process ID
-    unsigned int       uid;         // User ID
-    int                syscall_type;// SYS_OPEN=1, SYS_WRITE=2, SYS_RENAME=3, SYS_UNLINK=4
-    unsigned long      bytes_req;   // Bytes written
-    char comm[16];                  // Process command name
-    char filename[256];             // Target file path
+struct file_event_t {
+    unsigned long long timestamp_ns;
+    unsigned int pid, tid, uid, event_type;
+    int fd;
+    unsigned long long bytes_count;
+    char comm[16];
+    char filename[256], new_filename[256];
+    unsigned char payload_sample[64];
 };
 ```
 
@@ -109,15 +109,16 @@ struct fs_event_t {
 
 ```json
 {
-  "timestamp": 1762473600.123,
+  "packet_type": "ALERT",
+  "timestamp_ms": 1762473600123,
   "pid": 48291,
-  "process_name": "evil_crypt",
-  "threat_score": 95.5,
+  "comm": "evil_crypt",
+  "uid": 1000,
+  "risk_score": 95.5,
+  "threshold": 75.0,
   "action_taken": "SIGKILL",
-  "trigger_reasons": [
-    "HIGH_INLINE_ENTROPY (7.89 bits/byte)",
-    "DESTRUCTIVE_SEQUENCE_DAG (OPEN→WRITE→RENAME)"
-  ]
+  "triggered_heuristics": ["HIGH_INLINE_ENTROPY", "DESTRUCTIVE_SEQUENCE_DAG"],
+  "system_metrics": {}
 }
 ```
 
@@ -133,8 +134,11 @@ Ransomware-Detector/
 │   ├── event_defs.h                 # [Contract A] C struct: Kernel ↔ Engine
 │   └── ipc_schema.json             # [Contract B] JSON schema: Engine ↔ Dashboard
 │
-├── kernel/                          # Module 1: eBPF kernel probes & BCC loader
-│   └── (under development)
+├── kernel_probes/                   # Module 1: eBPF kernel probes & BCC loader
+│   ├── probes.bpf.c
+│   ├── probe_loader.py
+│   ├── Makefile
+│   └── tests/
 │
 ├── engine/                          # Module 2: User-space detection engine
 │   ├── main_daemon.py              # CLI orchestrator (--mock / --live / --dry-run)
@@ -159,7 +163,8 @@ Ransomware-Detector/
 │       ├── test_mock_streamer.py   # Event shape, scenario content, lifecycle
 │       └── test_ingestor.py        # ctypes struct layout, dual-mode ingestion
 │
-└── ui_testing/                      # Module 3: Simulators, benchmarks & dashboard
+├── core_engine/                     # Parallel copy; not the active test path
+└── ui_testing/                      # Module 3: Planned simulators, benchmarks & dashboard
     └── (under development)
 ```
 
@@ -169,42 +174,41 @@ Ransomware-Detector/
 
 | Layer | Technology | Purpose |
 |---|---|---|
-| Kernel Instrumentation | C (eBPF), BCC, Linux Tracepoints | Zero-overhead syscall interception via BPF ring buffer |
+| Kernel Instrumentation | C (eBPF), BCC, Linux Tracepoints | Syscall interception via BPF perf buffer |
 | Detection Engine | Python 3.10+, ctypes | Behavioral heuristics, Shannon entropy, process mitigation |
 | Inter-Module IPC | UDP datagrams, JSONL | Fire-and-forget non-blocking telemetry transport |
-| Dashboard | FastAPI, WebSocket, Chart.js, Tailwind CSS | Real-time SOC visualization |
+| Dashboard | Planned | `ui_testing/` currently contains only a placeholder |
 | Testing | pytest, Mock Streamer | 100 automated tests with dry-run safe mode |
 
 ---
 
 ## Current Status: Under Active Development
 
-> **This project is being built and integrated by a three-person team. Individual modules are being developed on separate feature branches and merged upon completion.**
+> **The detection engine and kernel-probe implementation are present in the current checkout. The dashboard and validation tooling are still planned.**
 
 | Module | Branch | Status | Tests |
 |---|---|---|---|
-| **Kernel eBPF Probes** (`kernel/`) | `feat/kernel-probes` | In Progress | — |
-| **Detection Engine** (`engine/`) | `feat/core-engine` | Complete | 100/100 passing |
-| **Testing & Dashboard** (`ui_testing/`) | `feat/testing-ui` | In Progress | — |
+| **Kernel eBPF Probes** (`kernel_probes/`) | — | Implemented; host-dependent | `make check` / `make lint` pass |
+| **Detection Engine** (`engine/`) | — | Implemented | 99/100 passing in this restricted environment |
+| **Testing & Dashboard** (`ui_testing/`) | — | Planned | — |
 
 ### Engine Test Results
 
 ```
-============================= 100 passed in 9.87s =============================
+============================= 99 passed, 1 failed =============================
 ```
 
 Key validations:
-- **Zero false positives** on benign compiler and archive workloads at 15,000 events/sec
-- **Sub-50ms detection latency** from first malicious event to process termination
 - **Canary instant-kill** — honeyfile tampering triggers threat score ≥ 100 immediately
-- **Selective mitigation** — mixed workloads terminate only the ransomware PID
-- **Full IPC schema compliance** — every telemetry packet validates against `common/ipc_schema.json`
+- **Selective mitigation** — mixed workloads target only the ransomware PID in dry-run tests
+- **IPC schema compliance** — telemetry packets are validated against `common/ipc_schema.json`
+- The one failing test requires an IPv4 UDP socket, which is unavailable in the current restricted environment.
 
 ---
 
 ## Requirements
 
-- Linux kernel ≥ 5.8 (for BPF ring buffer support)
+- Linux kernel with BCC/perf-buffer support
 - Python ≥ 3.10
 - BCC (BPF Compiler Collection) — for live kernel probe mode
 - Root privileges — required only for loading eBPF programs (`--live` mode)
