@@ -115,3 +115,4 @@ PAYLOAD_SAMPLE_SIZE: int = 64
 
 # Default canary deployment directory
 DEFAULT_CANARY_DIR: str = "/tmp/aegis_canary_zone"
+# Keep thresholds aligned with common/event_defs.h and common/ipc_schema.json.
