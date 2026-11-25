@@ -1,219 +1,256 @@
 <p align="center">
-  <img src="https://img.shields.io/badge/eBPF-Kernel%20Instrumentation-critical?style=for-the-badge&logo=linux&logoColor=white" />
-  <img src="https://img.shields.io/badge/Python-3.10+-blue?style=for-the-badge&logo=python&logoColor=white" />
-  <img src="https://img.shields.io/badge/C-BPF%20Programs-orange?style=for-the-badge&logo=c&logoColor=white" />
-  <img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" />
+  <img src="https://img.shields.io/badge/eBPF-Kernel%20Instrumentation-7e22ce?style=for-the-badge&logo=linux&logoColor=white" alt="eBPF" />
+  <img src="https://img.shields.io/badge/Python-3.10+-facc15?style=for-the-badge&logo=python&logoColor=140726" alt="Python 3.10+" />
+  <img src="https://img.shields.io/badge/C-BPF%20Tracepoints-a855f7?style=for-the-badge&logo=c&logoColor=white" alt="C eBPF" />
+  <img src="https://img.shields.io/badge/Tests-100%20Passing-10b981?style=for-the-badge" alt="Tests" />
+  <img src="https://img.shields.io/badge/License-MIT-eab308?style=for-the-badge" alt="License" />
 </p>
 
-# Ransomware Detector
+# eBPF Ransomware Detector
 
-**A real-time Linux ransomware detection and mitigation system powered by eBPF kernel instrumentation and multi-layered user-space behavioral heuristics.**
+**A real-time Linux ransomware detection, process-tree mitigation, and live telemetry system built on eBPF syscall tracepoints and multi-layered behavioral heuristics.**
 
-Ransomware Detector intercepts filesystem syscalls at the kernel level — before any damage reaches disk — and feeds them through a high-speed heuristic scoring engine that identifies encryption behavior, kills malicious process trees, and broadcasts telemetry to a live SOC dashboard. Zero signatures. Zero filesystem scanning. Sub-50ms response time from first malicious write to process termination.
-
----
-
-## How It Works
-
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                            Linux Kernel Space                              │
-│                                                                            │
-│   sys_openat ──┐                                                           │
-│   sys_write  ──┤── eBPF Tracepoint Probes ──► BPF Perf Buffer ──┐         │
-│   sys_rename ──┤     (probes.bpf.c)            (file_event_t)    │         │
-│   sys_unlink ──┘                                                 │         │
-└──────────────────────────────────────────────────────────────────┼─────────┘
-                                                                   │
-                              ┌────────────────────────────────────┘
-                              ▼
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                           User Space — Detection Engine                    │
-│                                                                            │
-│   EventIngestor ──► ┌─────────────────────────────────┐                    │
-│                     │  Multi-Layer Heuristic Pipeline  │                    │
-│                     │                                  │                    │
-│                     │  ① Shannon Entropy Analysis      │    ┌────────────┐ │
-│                     │  ② Canary Honeyfile Tripwires    │───►│ Mitigator  │ │
-│                     │  ③ Behavioral Sequence DAG       │    │ SIGSTOP →  │ │
-│                     │  ④ I/O Velocity & Ext Mutation   │    │ SIGKILL    │ │
-│                     └─────────────────────────────────┘    └────────────┘ │
-│                               │                                            │
-│                               ▼                                            │
-│                     IPC Publisher (UDP + JSONL)                             │
-└─────────────────────────────┬───────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                      Dashboard & Validation Suite                          │
-│                                                                            │
-│   Real-Time SOC Web Dashboard  ·  CLI Monitor  ·  Attack Simulators       │
-│   Overhead Benchmarks  ·  False-Positive Validation                        │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
+The detector intercepts filesystem syscalls in kernel space via BCC/eBPF, streams fixed-layout events to a user-space Python scoring daemon, terminates offending process trees using a two-stage `SIGSTOP` → `SIGKILL` cascade, and broadcasts real-time telemetry to a zero-dependency web dashboard and CLI monitor.
 
 ---
 
-## Architecture
+## 1. Overview & Architecture
 
-The system is divided into three independent, contract-bound modules built in parallel:
+The system is split into three decoupled components bound by two shared contracts:
+- **Contract A ([`common/event_defs.h`](common/event_defs.h))**: 632-byte `struct file_event_t` streamed from eBPF tracepoints to the detection engine.
+- **Contract B ([`common/ipc_schema.json`](common/ipc_schema.json))**: JSON `ALERT` and `METRIC` telemetry packets broadcast over non-blocking UDP (`127.0.0.1:51423`) and appended to `/tmp/aegis_telemetry.jsonl`.
 
-### Module 1 — Kernel eBPF Probes (`kernel_probes/`)
+```mermaid
+flowchart LR
+    subgraph Kernel["Kernel Space (kernel_probes/)"]
+        TP["Tracepoints: openat, write, renameat/2, unlinkat, close"]
+        BPF["probes.bpf.c (ignored_pids, fd_paths, BPF_PERF_OUTPUT)"]
+        TP --> BPF
+    end
 
-Low-overhead eBPF tracepoint programs attached to `sys_openat`, `sys_write`, `sys_renameat`, `sys_renameat2`, `sys_unlinkat`, and `sys_close`. Events are pushed through a BCC perf buffer as C structs and converted to Python dicts by a BCC-based loader class (`BPFEventStreamer`). In-kernel PID filtering and pseudo-filesystem exclusions ensure only relevant filesystem activity reaches user space.
+    subgraph Loader["BCC Loader"]
+        PL["BPFEventStreamer (probe_loader.py)"]
+        MS["MockBPFStreamer (mock_streamer.py)"]
+    end
 
-**Tech:** C (eBPF restricted C), BCC, Linux tracepoints, BPF perf buffer
+    subgraph Engine["User-Space Engine (engine/)"]
+        ING["EventIngestor (ingestor.py)"]
+        ST["StateTracker (state_tracker.py)"]
+        CAN["CanaryManager (canary.py)"]
+        ENT["Entropy Analyzer (entropy.py)"]
+        DAG["Sequence DAG (sequence_dag.py)"]
+        MIT["Mitigator: SIGSTOP -> SIGKILL (mitigator.py)"]
+        IPC["IPCPublisher: UDP 51423 + JSONL (ipc_publisher.py)"]
 
-### Module 2 — Detection Engine (`engine/`)
+        ING --> ST
+        ST --> CAN
+        ST --> ENT
+        ST --> DAG
+        CAN --> MIT
+        ENT --> MIT
+        DAG --> MIT
+        MIT --> IPC
+    end
 
-The central brain of the detector. A high-speed Python daemon ingests kernel events and runs each through a four-layer heuristic scoring pipeline:
+    subgraph UI["Dashboard & Validation (ui_testing/)"]
+        DASH["Web Dashboard: HTTP :8080 (dashboard.py)"]
+        MON["CLI Monitor (monitor.py)"]
+        SIM["Attack Simulator & Benchmark (attack_sim.py, benchmark.py)"]
+    end
 
-| Heuristic | Technique | Scoring |
-|---|---|---|
-| **Dual-Stage Shannon Entropy** | Inline 64-byte sample entropy + on-disk 4 KiB verification. Detects plaintext-to-ciphertext transitions and magic-byte overwrites. | +35 (magic overwrite), +30 (disk entropy) |
-| **Canary Honeyfile Tripwires** | Hidden decoy files deployed at startup. Any process touching a canary is immediately flagged — zero tolerance. | +100 (instant kill) |
-| **Behavioral Sequence DAG** | Per-PID finite state machine tracking destructive syscall sequences: in-place encryption (`OPEN→WRITE→RENAME`) and copy-and-shred (`OPEN(A)→WRITE(B)→UNLINK(A)`) loops. | Exponential: 10 × 1.5^C per cycle |
-| **I/O Velocity & Extension Mutation** | Sliding-window rate tracking with exponential score decay. Detects rename bursts where many files receive the same new extension (e.g., `.locked`). | +50 (uniform extension burst) |
-
-When a process's cumulative threat score crosses the configurable threshold (default 75.0), the mitigator executes a two-stage surgical response: instant `SIGSTOP` freeze of the entire process tree, followed by `SIGKILL` termination — with a `--dry-run` safe mode for testing.
-
-**Tech:** Python 3.10+, ctypes, Shannon entropy, exponential decay scoring
-
-### Module 3 — Testing, Benchmarks & Dashboard (`ui_testing/`, planned)
-
-This module is not implemented yet. The `ui_testing/` directory currently contains only a placeholder; the simulators, benchmarks, dashboard, and TUI remain planned.
-
-**Tech:** Python, FastAPI, Tailwind CSS, Chart.js, Rich/Textual TUI
+    BPF -->|"perf buffer (file_event_t)"| PL
+    PL -->|"--live"| ING
+    MS -->|"--mock"| ING
+    IPC -->|"UDP + JSONL"| DASH
+    IPC -->|"UDP / JSONL"| MON
+    SIM -.->|"Sandbox / Canary I/O"| TP
+```
 
 ---
 
-## Data Contracts
+## 2. Key Features
 
-Two shared contracts decouple the modules, enabling fully independent development:
+### Kernel Space (`kernel_probes/`)
+- **Syscall Tracepoints ([`probes.bpf.c`](kernel_probes/probes.bpf.c))**: Hooks `sys_enter_openat`, `sys_exit_openat`, `sys_enter_write`, `sys_enter_renameat`, `sys_enter_renameat2`, `sys_enter_unlinkat`, and `sys_enter_close`.
+- **In-Kernel Context & Filtering**: Maintains `fd_paths` (`(tgid, fd) → filename`), `pending_open`, and `ignored_pids` (auto-excluding the detector PID), while filtering pseudo-filesystems (`/proc`, `/sys`, `/dev`, `/run`).
+- **Payload Sampling**: Captures the first 64 bytes (`PAYLOAD_SAMPLE_SIZE`) of write buffers via `bpf_probe_read_user()` for inline entropy checks.
+- **Lazy BCC Wrapper ([`probe_loader.py`](kernel_probes/probe_loader.py))**: `BPFEventStreamer` decodes the 632-byte `FileEvent` `ctypes.Structure` into Python dicts and imports `bcc` lazily so `--mock` development works without BCC installed.
 
-### Contract A — Kernel → Engine (`common/event_defs.h`)
+### User-Space Detection & Mitigation Engine (`engine/`)
+Each PID is tracked in [`StateTracker`](engine/state_tracker.py) with sliding windows (`1.0 s` I/O velocity) and exponential time-decay ($S(t) = S(t_0) e^{-0.5 (t - t_0)}$). Crossing `KILL_THRESHOLD = 75.0` triggers mitigation:
 
-```c
-struct file_event_t {
-    unsigned long long timestamp_ns;
-    unsigned int pid, tid, uid, event_type;
-    int fd;
-    unsigned long long bytes_count;
-    char comm[16];
-    char filename[256], new_filename[256];
-    unsigned char payload_sample[64];
-};
-```
+| Heuristic | Module | Trigger Condition | Score Delta |
+|---|---|---|---|
+| **Canary Honeyfile Tripwire** | [`heuristics/canary.py`](engine/heuristics/canary.py) | `WRITE`, `RENAME`, or `UNLINK` on deployed decoy files in `/tmp/aegis_canary_zone` | `+100.0` (instant) |
+| **Stage 1: Inline Entropy & Magic Overwrite** | [`heuristics/entropy.py`](engine/heuristics/entropy.py) | `OPEN` stashes known magic header (`%PDF`, `PK\x03\x04`, PNG, JPEG, GZIP, ELF); subsequent high-entropy `WRITE` ($H_{64} > 5.4$) overwrites it | `+35.0` |
+| **Stage 2: On-Disk Verification** | [`heuristics/entropy.py`](engine/heuristics/entropy.py) | When score $\ge 40.0$, `EVENT_CLOSE` reads 4096 bytes from disk; triggers if $H_{4096} > 7.6$ and extension is not in `HIGH_ENTROPY_EXTENSIONS` | `+30.0` |
+| **Behavioral Sequence DAG** | [`heuristics/sequence_dag.py`](engine/heuristics/sequence_dag.py) | In-place (`OPEN → WRITE(high H) → RENAME(ext change)`) or copy-and-shred (`OPEN(A) → WRITE(B, high H) → UNLINK(A)`) within `2.0 s` | $+10 \times 1.5^{\min(C, 30)}$ |
+| **Extension-Uniformity Burst** | [`state_tracker.py`](engine/state_tracker.py) | $\ge 6$ distinct files renamed to the same unknown extension within `3.0 s` | `+50.0` |
 
-### Contract B — Engine → Dashboard (`common/ipc_schema.json`)
+- **Two-Stage Process Tree Mitigation ([`mitigator.py`](engine/mitigator.py))**: Walks `/proc/<pid>/task/*/children`, skips `OS_CRITICAL_WHITELIST` binaries (`systemd`, `init`, `sshd`, `kthreadd`, etc.), freezes the tree with `SIGSTOP`, and terminates with `SIGKILL` (or logs `DRY_RUN_KILL` under `--dry-run`, enabled by default).
+- **Alert Deduplication ([`main_daemon.py`](engine/main_daemon.py))**: Emits one `ALERT` per flagged PID and short-circuits repeated heuristic evaluation for already-mitigated PIDs.
+- **Non-Blocking IPC ([`ipc_publisher.py`](engine/ipc_publisher.py))**: Sends `ALERT` packets immediately and `METRIC` heartbeats every `0.5 s` via UDP (`127.0.0.1:51423`) and `/tmp/aegis_telemetry.jsonl`.
 
-```json
-{
-  "packet_type": "ALERT",
-  "timestamp_ms": 1762473600123,
-  "pid": 48291,
-  "comm": "evil_crypt",
-  "uid": 1000,
-  "risk_score": 95.5,
-  "threshold": 75.0,
-  "action_taken": "SIGKILL",
-  "triggered_heuristics": ["HIGH_INLINE_ENTROPY", "DESTRUCTIVE_SEQUENCE_DAG"],
-  "system_metrics": {}
-}
-```
-
-Transport: Non-blocking UDP datagrams to `127.0.0.1:51423` + append-only JSONL log at `/tmp/aegis_telemetry.jsonl`.
+### Dashboard & Validation Suite (`ui_testing/`)
+- **Live Web Console ([`dashboard.py`](ui_testing/dashboard.py))**: Zero-dependency `ThreadingHTTPServer` on port `8080` with a translucent purple–yellow interface, SVG speedometer gauges for packet counts and benchmark throughput, active trigger highlighting, live telemetry table (green `None` vs. red heuristic tags), and `--mock` launcher support.
+- **CLI Monitor ([`monitor.py`](ui_testing/monitor.py))**: Lightweight terminal listener for UDP `127.0.0.1:51423` or tailing `/tmp/aegis_telemetry.jsonl`.
+- **Attack Simulator ([`attack_sim.py`](ui_testing/attack_sim.py))**: Safe synthetic generator executing real filesystem operations inside `/tmp/ransom_sandbox` and `/tmp/aegis_canary_zone`.
+- **Benign Benchmark ([`benchmark.py`](ui_testing/benchmark.py))**: Measures wall-clock time and `/proc/self/status` `VmRSS` over benign file creation/copy/read loops.
 
 ---
 
-## Repository Structure
+## 3. Dashboard Preview
+
+<!-- DASHBOARD_PREVIEW_START: Replace the image path below with a screenshot of http://127.0.0.1:8080 -->
+![eBPF Ransomware Detector Live Dashboard](docs/dashboard-preview.png)
+<!-- DASHBOARD_PREVIEW_END -->
+
+---
+
+## 4. Prerequisites & Installation
+
+### Standard Python Setup (`--mock` Mode, Dashboard & Tests)
+Runtime components use **Python ≥ 3.10 standard library only**. `pytest` is required only for running the test suite.
+
+```bash
+git clone https://github.com/magnetar-x/Ransomware-Detector.git
+cd Ransomware-Detector
+
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+```
+
+### Linux eBPF Setup (Required Only for `--live` Mode)
+Live kernel tracing requires a Linux host with BCC Python bindings, kernel headers, and `root` privileges:
+
+```bash
+# Ubuntu / Debian
+sudo apt update
+sudo apt install -y bpfcc-tools python3-bpfcc linux-headers-$(uname -r) clang make
+
+# Arch Linux
+sudo pacman -S bcc python-bcc linux-headers clang make
+```
+
+Verify the kernel probe source and loader:
+
+```bash
+cd kernel_probes && make check && make lint
+```
+
+---
+
+## 5. Usage & Quickstart
+
+### (a) Mock / Dry-Run Mode with the Web Dashboard
+Starts the dashboard (`http://127.0.0.1:8080`) and automatically spawns `engine.main_daemon --mock --dry-run`:
+
+```bash
+python3 ui_testing/dashboard.py --mock
+```
+
+Optional flags:
+
+```bash
+python3 ui_testing/dashboard.py --mock --scenario mixed --events-per-sec 500 --port 8080
+```
+
+To run the mock daemon and CLI monitor in separate terminals instead:
+
+```bash
+# Terminal 1: Engine daemon (mock + safe dry-run)
+python3 -m engine.main_daemon --mock --dry-run --scenario ransomware_inplace
+
+# Terminal 2: CLI telemetry monitor (add --metrics to show periodic METRIC packets)
+python3 ui_testing/monitor.py --metrics
+```
+
+### (b) Live eBPF Mode
+Run the detection daemon with root privileges (`--dry-run` is active by default; add `--live-mitigation` to dispatch real `SIGSTOP`/`SIGKILL` signals):
+
+```bash
+# Terminal 1: Live eBPF engine in safe dry-run mode
+sudo python3 -m engine.main_daemon --live --dry-run
+
+# Or with active process termination enabled:
+# sudo python3 -m engine.main_daemon --live --live-mitigation
+
+# Terminal 2: Web dashboard listening to live telemetry (without --mock)
+python3 ui_testing/dashboard.py
+```
+
+### (c) Running Attack Simulator & Benchmark Scenarios
+`attack_sim.py` performs real filesystem I/O inside `/tmp/ransom_sandbox` (and `/tmp/aegis_canary_zone` for `canary`) so it is detected when the engine is running in `--live` mode:
+
+```bash
+# Overwrite .pdf sandbox files with high-entropy payloads (triggers Stage 1 + Stage 2 entropy)
+python3 ui_testing/attack_sim.py --scenario entropy --cleanup
+
+# Mass-rename sandbox files to .locked (triggers extension uniformity + sequence DAG)
+python3 ui_testing/attack_sim.py --scenario rename --ext .locked --cleanup
+
+# Run OPEN->WRITE->RENAME and OPEN(A)->WRITE(B)->UNLINK(A) loops
+python3 ui_testing/attack_sim.py --scenario dag --cycles 8 --cleanup
+
+# Touch an existing daemon-deployed canary file in /tmp/aegis_canary_zone
+# (exits cleanly with a message if the daemon has not deployed any yet)
+python3 ui_testing/attack_sim.py --scenario canary
+
+# Run all scenarios together
+python3 ui_testing/attack_sim.py --scenario all --cleanup
+
+# Run benign workload benchmark (no alerts should be triggered)
+python3 ui_testing/benchmark.py --files 30 --iterations 2
+```
+
+---
+
+## 6. Testing
+
+Run the unit and integration test suite from the repository root:
+
+```bash
+pytest engine/tests/ -v
+```
+
+Current status: **100 tests passing** across `test_canary.py`, `test_entropy.py`, `test_ingestor.py`, `test_integration.py`, `test_ipc_publisher.py`, `test_mitigator.py`, `test_mock_streamer.py`, `test_sequence_dag.py`, and `test_state_tracker.py`.
+
+---
+
+## 7. Project Structure & Safety Disclaimer
 
 ```text
 Ransomware-Detector/
-├── common/                          # Shared data contracts (read-only after initial setup)
-│   ├── event_defs.h                 # [Contract A] C struct: Kernel ↔ Engine
-│   └── ipc_schema.json             # [Contract B] JSON schema: Engine ↔ Dashboard
-│
-├── kernel_probes/                   # Module 1: eBPF kernel probes & BCC loader
-│   ├── probes.bpf.c
-│   ├── probe_loader.py
-│   ├── Makefile
-│   └── tests/
-│
-├── engine/                          # Module 2: User-space detection engine
-│   ├── main_daemon.py              # CLI orchestrator (--mock / --live / --dry-run)
-│   ├── ingestor.py                 # Dual-mode event consumer (live BCC ↔ mock streamer)
-│   ├── mock_streamer.py            # Synthetic kernel event generator (6 scenarios)
-│   ├── state_tracker.py            # Per-PID sliding window, score decay, velocity tracking
-│   ├── mitigator.py                # SIGSTOP → SIGKILL cascade with --dry-run safe mode
-│   ├── ipc_publisher.py            # Non-blocking UDP + JSONL telemetry broadcaster
-│   ├── config.py                   # Central constants and tunable thresholds
-│   ├── heuristics/
-│   │   ├── entropy.py              # Dual-stage Shannon entropy analyzer
-│   │   ├── canary.py               # Honeyfile deployment & zero-tolerance tripwires
-│   │   └── sequence_dag.py         # Behavioral syscall sequence state machine
-│   └── tests/                      # 100 unit + integration tests (pytest)
-│       ├── test_integration.py     # End-to-end detection benchmarks
-│       ├── test_entropy.py         # Shannon entropy correctness & staging
-│       ├── test_canary.py          # Honeyfile deployment & tripwire verification
-│       ├── test_sequence_dag.py    # DAG pattern matching & exponential scoring
-│       ├── test_state_tracker.py   # Score decay, velocity, extension uniformity
-│       ├── test_mitigator.py       # Safe mode, whitelist, signal dispatch
-│       ├── test_ipc_publisher.py   # Schema compliance, UDP broadcast, JSONL logging
-│       ├── test_mock_streamer.py   # Event shape, scenario content, lifecycle
-│       └── test_ingestor.py        # ctypes struct layout, dual-mode ingestion
-│
-├── core_engine/                     # Parallel copy; not the active test path
-└── ui_testing/                      # Module 3: Planned simulators, benchmarks & dashboard
-    └── (under development)
+├── common/
+│   ├── event_defs.h              # Contract A: 632-byte C struct file_event_t
+│   └── ipc_schema.json           # Contract B: Telemetry JSON schema (ALERT / METRIC)
+├── kernel_probes/
+│   ├── probes.bpf.c              # eBPF syscall tracepoint programs
+│   ├── probe_loader.py           # BCC perf-buffer loader (BPFEventStreamer)
+│   ├── Makefile                  # Header/contract check & py_compile lint
+│   └── tests/test_stream.py      # Standalone live eBPF event printer
+├── engine/
+│   ├── main_daemon.py            # CLI orchestrator (--mock / --live, --dry-run / --live-mitigation)
+│   ├── ingestor.py               # Dual-mode event consumer (live BCC <-> MockBPFStreamer)
+│   ├── mock_streamer.py          # Synthetic kernel event generator (6 scenarios)
+│   ├── state_tracker.py          # Per-PID sliding windows, score decay, extension uniformity
+│   ├── mitigator.py              # Two-stage SIGSTOP -> SIGKILL process-tree terminator
+│   ├── ipc_publisher.py          # Non-blocking UDP (51423) + JSONL telemetry broadcaster
+│   ├── config.py                 # Thresholds, scoring weights, magic signatures, paths
+│   ├── heuristics/               # canary.py, entropy.py, sequence_dag.py
+│   └── tests/                    # 100 unit & integration tests (pytest)
+├── core_engine/                  # Spec-compatible import shims re-exporting engine/*
+├── ui_testing/
+│   ├── dashboard.py              # Live web dashboard (HTTP :8080, UDP :51423, JSONL tail)
+│   ├── monitor.py                # CLI telemetry monitor
+│   ├── attack_sim.py             # Safe synthetic ransomware simulator
+│   └── benchmark.py              # Benign I/O & RSS memory benchmark
+└── requirements.txt              # Test dependency (pytest>=8.0)
 ```
 
----
-
-## Tech Stack
-
-| Layer | Technology | Purpose |
-|---|---|---|
-| Kernel Instrumentation | C (eBPF), BCC, Linux Tracepoints | Syscall interception via BPF perf buffer |
-| Detection Engine | Python 3.10+, ctypes | Behavioral heuristics, Shannon entropy, process mitigation |
-| Inter-Module IPC | UDP datagrams, JSONL | Fire-and-forget non-blocking telemetry transport |
-| Dashboard | Planned | `ui_testing/` currently contains only a placeholder |
-| Testing | pytest, Mock Streamer | 100 automated tests with dry-run safe mode |
-
----
-
-## Current Status: Under Active Development
-
-> **The detection engine and kernel-probe implementation are present in the current checkout. The dashboard and validation tooling are still planned.**
-
-| Module | Branch | Status | Tests |
-|---|---|---|---|
-| **Kernel eBPF Probes** (`kernel_probes/`) | — | Implemented; host-dependent | `make check` / `make lint` pass |
-| **Detection Engine** (`engine/`) | — | Implemented | 99/100 passing in this restricted environment |
-| **Testing & Dashboard** (`ui_testing/`) | — | Planned | — |
-
-### Engine Test Results
-
-```
-============================= 99 passed, 1 failed =============================
-```
-
-Key validations:
-- **Canary instant-kill** — honeyfile tampering triggers threat score ≥ 100 immediately
-- **Selective mitigation** — mixed workloads target only the ransomware PID in dry-run tests
-- **IPC schema compliance** — telemetry packets are validated against `common/ipc_schema.json`
-- The one failing test requires an IPv4 UDP socket, which is unavailable in the current restricted environment.
-
----
-
-## Requirements
-
-- Linux kernel with BCC/perf-buffer support
-- Python ≥ 3.10
-- BCC (BPF Compiler Collection) — for live kernel probe mode
-- Root privileges — required only for loading eBPF programs (`--live` mode)
-
-> **Note:** The engine can run entirely without root or BCC using `--mock` mode, which uses a built-in synthetic event generator for development and testing.
+> **Safety Disclaimer:**
+> Active mitigation (`--live-mitigation`) dispatches `SIGSTOP` and `SIGKILL` to processes and their child trees in `/proc`. Always validate new heuristics or simulations in `--dry-run` mode (the default) and keep `attack_sim.py` pointed strictly at isolated sandbox directories (`/tmp/ransom_sandbox`, `/tmp/aegis_canary_zone`). Never run unverified attack simulations on production machines or against real user directories.
 
 ---
 
