@@ -2,7 +2,7 @@
 engine/ingestor.py – Dual-mode event consumer.
 
 Provides ``EventIngestor`` which can switch between:
-  • **live mode** – imports ``BPFEventStreamer`` from ``kernel.probe_loader``
+  • **live mode** – imports ``BPFEventStreamer`` from ``kernel_probes.probe_loader``
     and translates the lean C-struct-based events into the canonical
     superset dict used by the engine.
   • **mock mode** – uses ``engine.mock_streamer.MockBPFStreamer`` for
@@ -102,7 +102,7 @@ class EventIngestor:
     Parameters
     ----------
     mode : ``"live"`` | ``"mock"``
-        ``"live"`` – import ``BPFEventStreamer`` from ``kernel.probe_loader``.
+        ``"live"`` – import ``BPFEventStreamer`` from ``kernel_probes.probe_loader``.
         ``"mock"`` – use ``engine.mock_streamer.MockBPFStreamer``.
     callback : callable
         Function that receives each normalised event dict.
@@ -175,10 +175,10 @@ class EventIngestor:
 
     def _start_live(self) -> None:
         try:
-            from kernel.probe_loader import BPFEventStreamer  # type: ignore[import-untyped]
+            from kernel_probes.probe_loader import BPFEventStreamer  # type: ignore[import-untyped]
         except ImportError as exc:
             raise RuntimeError(
-                "Live mode requires the 'kernel.probe_loader' module "
+                "Live mode requires the 'kernel_probes.probe_loader' module "
                 "(Role 1).  Use --mock for standalone testing."
             ) from exc
 

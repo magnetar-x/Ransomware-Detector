@@ -42,6 +42,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Cap the exponent so long-running processes cannot overflow float64.
+_MAX_DAG_EXPONENT = 30
+
 
 def _prune_stale(state: "PIDState", now: float) -> None:
     """Remove DAG entries older than the sliding window."""
@@ -57,7 +60,8 @@ def _prune_stale(state: "PIDState", now: float) -> None:
 def _score_cycle(state: "PIDState", label: str) -> float:
     """Increment cycle counter and return the exponential score delta."""
     state.dag_cycles += 1
-    delta = DAG_BASE_SCORE * (DAG_EXPONENT_BASE ** state.dag_cycles)
+    exponent = min(state.dag_cycles, _MAX_DAG_EXPONENT)
+    delta = DAG_BASE_SCORE * (DAG_EXPONENT_BASE ** exponent)
     logger.debug(
         "DAG cycle #%d  pid=%d  pattern=%s  ΔS=%.1f",
         state.dag_cycles, state.pid, label, delta,

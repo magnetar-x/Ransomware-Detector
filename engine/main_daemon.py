@@ -100,6 +100,13 @@ class AegisEngineDaemon:
         state = self.state_tracker.get_or_create(pid, comm=comm, uid=uid)
         self.state_tracker.record_event(state, event)
 
+        # Already mitigated (e.g., in --dry-run mode): keep metrics/velocity
+        # tracking accurate without re-running heuristics or emitting alerts.
+        if self.mitigator.is_mitigated(pid):
+            t_end = time.perf_counter_ns()
+            self._total_latency_us += (t_end - t0) / 1000.0
+            return
+
         # 1. Canary Tripwire (Zero-Tolerance)
         canary_score = self.canary_manager.check_event(event, state)
         if canary_score > 0:
@@ -131,8 +138,9 @@ class AegisEngineDaemon:
 
         # 6. Check Threat Threshold & Mitigate
         if state.risk_score >= self.threshold:
+            already_mitigated = self.mitigator.is_mitigated(pid)
             action = self.mitigator.execute(state)
-            if action in ("SIGKILL", "DRY_RUN_KILL"):
+            if not already_mitigated and action in ("SIGKILL", "DRY_RUN_KILL"):
                 # Compute instantaneous latency metrics for the alert
                 t_end = time.perf_counter_ns()
                 latency_us = (t_end - t0) / 1000.0
@@ -157,7 +165,8 @@ class AegisEngineDaemon:
         last_time = time.monotonic()
 
         while not self._stop_event.is_set():
-            time.sleep(METRIC_INTERVAL_SEC)
+            if self._stop_event.wait(timeout=METRIC_INTERVAL_SEC):
+                break
             now = time.monotonic()
             elapsed = now - last_time
             if elapsed <= 0:

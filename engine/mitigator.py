@@ -79,6 +79,10 @@ class Mitigator:
         base_comm = os.path.basename(comm).strip()
         return base_comm in self.whitelist
 
+    def is_mitigated(self, pid: int) -> bool:
+        """Return True if *pid* has already been mitigated."""
+        return pid in self._mitigated_pids
+
     def execute(self, state: "PIDState") -> str:
         """
         Execute mitigation against the offending process in state.

@@ -29,9 +29,11 @@ def prepare_sandbox(sandbox_dir: str, file_count: int) -> list[str]:
     os.makedirs(sandbox_dir, exist_ok=True)
     paths: list[str] = []
     for i in range(file_count):
-        p = os.path.join(sandbox_dir, f"sample_doc_{i:02d}.txt")
-        with open(p, "w", encoding="utf-8") as f:
-            f.write(f"Benign test document #{i}\n" * 40)
+        p = os.path.join(sandbox_dir, f"sample_doc_{i:02d}.pdf")
+        with open(p, "wb") as f:
+            header = b"%PDF-1.7\n1 0 obj\n<< /Type /Catalog >>\nendobj\n"
+            body = f"Benign test document #{i}\n".encode("utf-8") * 40
+            f.write(header + body)
         paths.append(p)
     return paths
 
@@ -90,18 +92,27 @@ def simulate_sequence_dag(sandbox_dir: str, cycles: int = 8) -> None:
             os.unlink(tmp_enc)
 
 
-def simulate_canary_touch(canary_dir: str) -> None:
-    os.makedirs(canary_dir, exist_ok=True)
+def simulate_canary_touch(canary_dir: str) -> bool:
+    if not os.path.isdir(canary_dir):
+        print(f"[SIM:canary] Canary directory not found: {canary_dir}. Start the daemon first.")
+        return False
+
     existing = []
     for root, _, files in os.walk(canary_dir):
         for name in files:
             existing.append(os.path.join(root, name))
 
-    target = existing[0] if existing else os.path.join(canary_dir, ".canary_probe_test")
+    if not existing:
+        print(f"[SIM:canary] No daemon-created canary files found in {canary_dir}. Start the daemon first.")
+        return False
+
+    existing.sort()
+    target = existing[0]
     print(f"[SIM:canary] Touching canary target: {target}")
     with open(target, "ab") as f:
         f.write(os.urandom(64))
         f.flush()
+    return True
 
 
 def cleanup_dir(target_dir: str, allow_canary: bool = False) -> None:
@@ -156,7 +167,9 @@ def main() -> int:
         simulate_sequence_dag(args.sandbox_dir, cycles=args.cycles)
 
     if args.scenario in ("canary", "all"):
-        simulate_canary_touch(args.canary_dir)
+        touched = simulate_canary_touch(args.canary_dir)
+        if args.scenario == "canary" and not touched:
+            return 0
 
     if args.cleanup:
         cleanup_dir(args.sandbox_dir, allow_canary=args.allow_canary_cleanup)

@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import math
 import os
+import threading
 import time
 from collections import deque
 from typing import Any
@@ -128,6 +129,7 @@ class StateTracker:
 
     def __init__(self) -> None:
         self._states: dict[int, PIDState] = {}
+        self._lock = threading.Lock()
 
     # -- PID lifecycle ------------------------------------------------------
 
@@ -135,31 +137,34 @@ class StateTracker:
         self, pid: int, comm: str = "", uid: int = 0,
     ) -> PIDState:
         """Return the ``PIDState`` for *pid*, creating one if needed."""
-        state = self._states.get(pid)
-        if state is None:
-            state = PIDState(pid, comm, uid)
-            self._states[pid] = state
-        else:
-            # Keep comm/uid up-to-date (may change across exec)
-            if comm:
-                state.comm = comm
-            if uid:
-                state.uid = uid
-        return state
+        with self._lock:
+            state = self._states.get(pid)
+            if state is None:
+                state = PIDState(pid, comm, uid)
+                self._states[pid] = state
+            else:
+                # Keep comm/uid up-to-date (may change across exec)
+                if comm:
+                    state.comm = comm
+                if uid:
+                    state.uid = uid
+            return state
 
     def remove(self, pid: int) -> None:
         """Remove a PID from tracking (e.g. after SIGKILL)."""
-        self._states.pop(pid, None)
+        with self._lock:
+            self._states.pop(pid, None)
 
     def cleanup_stale(self, max_age_sec: float = 30.0) -> None:
         """Evict PIDs that have had no events for *max_age_sec*."""
         now = time.monotonic()
-        stale = [
-            pid for pid, s in self._states.items()
-            if now - s.last_event_time > max_age_sec
-        ]
-        for pid in stale:
-            del self._states[pid]
+        with self._lock:
+            stale = [
+                pid for pid, s in list(self._states.items())
+                if now - s.last_event_time > max_age_sec
+            ]
+            for pid in stale:
+                self._states.pop(pid, None)
 
     # -- scoring ------------------------------------------------------------
 

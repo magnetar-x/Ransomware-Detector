@@ -1,0 +1,7 @@
+# Runtime: Python >= 3.10 standard library only (no third-party runtime packages required).
+# Live eBPF kernel probe mode (--live) requires system BCC bindings
+# (e.g. `sudo apt install python3-bpfcc bpfcc-tools linux-headers-$(uname -r)`
+# or `sudo pacman -S bcc python-bcc linux-headers`).
+
+# Testing
+pytest>=8.0

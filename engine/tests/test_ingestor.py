@@ -108,7 +108,7 @@ class TestIngestorErrors:
 
     def test_live_mode_without_kernel_raises(self) -> None:
         ingestor = EventIngestor(mode="live", callback=lambda e: None)
-        with pytest.raises(RuntimeError, match="kernel.probe_loader"):
+        with pytest.raises(RuntimeError, match=r"(kernel_probes\.probe_loader|BCC)"):
             ingestor.start()
 
     def test_no_callback_raises(self) -> None:

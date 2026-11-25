@@ -83,16 +83,13 @@ class IPCPublisher:
             "action_taken": action_taken,
             "triggered_heuristics": list(state.triggered_heuristics) if state.triggered_heuristics else ["HIGH_RISK_THRESHOLD_EXCEEDED"],
             "target_files_sample": list(state.target_files[-10:]),
-            "system_metrics": system_metrics or {},
+            "system_metrics": system_metrics if system_metrics is not None else {},
             # Legacy aliases retained for existing dashboard consumers.
             "timestamp": timestamp_ms / 1000.0,
-            "pid": state.pid,
             "process_name": state.comm or f"pid_{state.pid}",
             "threat_score": round(state.risk_score, 2),
             "trigger_reasons": list(state.triggered_heuristics) if state.triggered_heuristics else ["HIGH_RISK_THRESHOLD_EXCEEDED"],
         }
-        if system_metrics is not None:
-            payload["system_metrics"] = system_metrics
 
         self.emit(payload)
         return payload
@@ -117,7 +114,6 @@ class IPCPublisher:
             "action_taken": "NONE",
             "triggered_heuristics": [],
             "timestamp": timestamp_ms / 1000.0,
-            "pid": 0,
             "process_name": "aegis_engine",
             "threat_score": 0.0,
             "trigger_reasons": [],
