@@ -7,6 +7,7 @@ import argparse
 import sys
 from pathlib import Path
 
+# Prepend repository root so kernel_probes resolves when invoked directly.
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from kernel_probes.probe_loader import BPFEventStreamer  # noqa: E402
