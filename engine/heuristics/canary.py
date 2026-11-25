@@ -36,6 +36,7 @@ logger = logging.getLogger(__name__)
 # (filename, header_bytes)
 # Each header mimics a real file format at low entropy so normal
 # filesystem scans don't flag them, but any *modification* is instant-kill.
+# Inode tracking catches rename/unlink operations even if paths change mid-flight.
 
 _DECOY_SPECS: list[tuple[str, bytes]] = [
     (
