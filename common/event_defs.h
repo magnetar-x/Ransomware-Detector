@@ -1,5 +1,6 @@
 #ifndef EVENT_DEFS_H
 #define EVENT_DEFS_H
+/* Contract A: shared kernel-to-userspace perf-buffer event layout (632 bytes on x86-64). */
 
 #define MAX_FILENAME_LEN 256
 #define PAYLOAD_SAMPLE_SIZE 64
