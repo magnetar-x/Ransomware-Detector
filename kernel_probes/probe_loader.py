@@ -29,6 +29,7 @@ class FileEvent(ctypes.Structure):
     ]
 
 
+# Matches sizeof(struct file_event_t) from common/event_defs.h on 64-bit Linux.
 assert ctypes.sizeof(FileEvent) == 632, ctypes.sizeof(FileEvent)
 
 
