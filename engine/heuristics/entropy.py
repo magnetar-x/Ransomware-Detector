@@ -43,6 +43,7 @@ logger = logging.getLogger(__name__)
 # Entropy is evaluated using a lookup table for log2(count).  This avoids
 # calling math.log2 once per histogram bucket while retaining support for both
 # the 64-byte inline sample and the 4096-byte disk sample.
+# Frequencies above _MAX_LOOKUP_COUNT fall back to math.log2 directly.
 _MAX_LOOKUP_COUNT = 4096
 _LOG2_COUNTS = [0.0] * (_MAX_LOOKUP_COUNT + 1)
 for _count in range(1, _MAX_LOOKUP_COUNT + 1):
