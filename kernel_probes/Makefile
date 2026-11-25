@@ -1,3 +1,4 @@
+# Build verification and lint targets for eBPF kernel probes and BCC loader.
 CLANG ?= clang
 CFLAGS ?= -O2 -g -target bpf -D__TARGET_ARCH_x86
 PROBE := probes.bpf.c
