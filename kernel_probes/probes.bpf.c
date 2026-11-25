@@ -1,3 +1,4 @@
+/* eBPF syscall tracepoints capturing file open, write, rename, unlink, and close events. */
 #include <linux/ptrace.h>
 #include <linux/unistd.h>
 #include "../common/event_defs.h"
