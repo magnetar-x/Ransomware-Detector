@@ -1,4 +1,5 @@
 {
+  "$comment": "Contract B: JSON schema for Engine-to-Dashboard ALERT and METRIC telemetry packets.",
   "type": "object",
   "properties": {
     "packet_type": { "type": "string", "enum": ["METRIC", "ALERT"] },
